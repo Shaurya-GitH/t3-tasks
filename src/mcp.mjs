@@ -61,7 +61,7 @@ const tools = {
     },
   },
   task_create: {
-    description: 'Create a task for the work the user asked this session to do, and link this session to it. Use only when no open task matches. For work that branches off the current task, use task_suggest instead.',
+    description: 'Create a task and link this session to it. Only when the user explicitly asks you to create a task. In every other case, including work that has no matching task, use task_suggest: the user decides what goes on their list.',
     properties: {
       title: { type: 'string', description: 'Short outcome, e.g. "Ship Klarna refund fix"' },
       description: { type: 'string', description: 'What the user asked for and why, in a few lines' },
