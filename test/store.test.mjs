@@ -118,3 +118,45 @@ test('malformed session links are rejected before adding or moving a session', (
   assert.equal(store.getTask(b.id).sessions.length, 0)
   assert.equal(store.getTask(b.id).events.length, 1)
 })
+
+test('a task records when it was settled, and forgets it when reopened', () => {
+  const task = store.createTask({ title: 'Settle me' })
+  assert.equal(task.settled_at, null)
+  const settled = store.updateTask(task.id, { status: 'settled' }, 'human')
+  assert.ok(Date.parse(settled.settled_at) > 0)
+  assert.equal(store.updateTask(task.id, { color: 'teal' }, 'human').settled_at, settled.settled_at)
+  assert.equal(store.updateTask(task.id, { status: 'in_progress', status_note: 'Reopened' }, 'human').settled_at, null)
+})
+
+test('startup gives tasks settled before settled_at existed the time of their last move to Settled', async () => {
+  const { DatabaseSync } = await import('node:sqlite')
+  const dir = mkdtempSync(join(tmpdir(), 't3-tasks-settled-'))
+  const db = new DatabaseSync(join(dir, 'tasks.db'))
+  db.exec(`
+    CREATE TABLE tasks (
+      id INTEGER PRIMARY KEY, title TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'todo', status_note TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'manual', external_id TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      position REAL NOT NULL DEFAULT 0, color TEXT,
+      UNIQUE (source, external_id)
+    );
+    CREATE TABLE events (id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL, at TEXT NOT NULL, actor TEXT NOT NULL, text TEXT NOT NULL);
+    INSERT INTO tasks (id, title, status, created_at, updated_at, color) VALUES
+      (1, 'Settled with history', 'settled', '', '2026-11-11T13:00:00.000Z', 'pink'),
+      (2, 'Settled without history', 'settled', '', '2026-11-11T14:00:00.000Z', 'teal'),
+      (3, 'Open', 'todo', '', '2026-11-11T15:00:00.000Z', 'lime');
+    INSERT INTO events (task_id, at, actor, text) VALUES
+      (1, '2026-11-11T11:00:00.000Z', 'human', 'Moved to Settled'),
+      (1, '2026-11-11T12:09:23.456Z', 'human', 'Moved to Settled');
+  `)
+  const { spawnSync } = await import('node:child_process')
+  const run = spawnSync(process.execPath, ['--input-type=module', '-e', "await import('./src/store.mjs')"], {
+    cwd: new URL('..', import.meta.url),
+    env: { ...process.env, T3_TASKS_HOME: dir }, encoding: 'utf8',
+  })
+  assert.equal(run.status, 0, run.stderr)
+  assert.deepEqual(db.prepare('SELECT settled_at FROM tasks ORDER BY id').all().map((row) => row.settled_at),
+    ['2026-11-11T12:09:23.456Z', '2026-11-11T14:00:00.000Z', null])
+  db.close()
+})

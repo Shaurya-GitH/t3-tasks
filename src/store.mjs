@@ -56,6 +56,12 @@ try { db.exec('ALTER TABLE tasks ADD COLUMN color TEXT') } catch {}
 for (const { id } of db.prepare('SELECT id FROM tasks WHERE color IS NULL ORDER BY id').all()) {
   db.prepare('UPDATE tasks SET color = ? WHERE id = ?').run(COLORS[(id - 1) % COLORS.length], id)
 }
+// When the task was settled, so the app can tell a session talked to afterwards. Tasks settled
+// before this column existed take it from their last move to Settled.
+try { db.exec('ALTER TABLE tasks ADD COLUMN settled_at TEXT') } catch {}
+db.exec(`UPDATE tasks SET settled_at = COALESCE(
+  (SELECT MAX(at) FROM events WHERE events.task_id = tasks.id AND text LIKE 'Moved to Settled%'), updated_at)
+  WHERE status = 'settled' AND settled_at IS NULL`)
 
 const now = () => new Date().toISOString()
 // The color fewest open tasks use, so tasks side by side tell apart.
@@ -126,13 +132,16 @@ export function updateTask(id, { title, notes, status, status_note, position, co
     }
   }
   if (color !== undefined && !COLORS.includes(color)) fail(`color must be one of ${COLORS.join(', ')}`)
-  db.prepare('UPDATE tasks SET title = ?, notes = ?, status = ?, status_note = ?, position = ?, color = ?, updated_at = ? WHERE id = ?').run(
+  const nextStatus = status ?? task.status
+  const settledAt = nextStatus !== 'settled' ? null : task.status === 'settled' ? task.settled_at : now()
+  db.prepare('UPDATE tasks SET title = ?, notes = ?, status = ?, status_note = ?, position = ?, color = ?, settled_at = ?, updated_at = ? WHERE id = ?').run(
     title === undefined ? task.title : text(title, 'title'),
     notes === undefined ? task.notes : String(notes),
-    status ?? task.status,
+    nextStatus,
     status_note === undefined ? task.status_note : String(status_note),
     typeof position === 'number' ? position : task.position,
     color ?? task.color,
+    settledAt,
     now(), task.id
   )
   const moved = status !== undefined && status !== task.status
