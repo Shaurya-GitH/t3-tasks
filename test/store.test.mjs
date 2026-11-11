@@ -94,3 +94,12 @@ test('startup resumes a partial color backfill without changing assigned colors'
   }
   db.close()
 })
+
+test('the user can add a session to a task from the app; the history says who', () => {
+  const task = store.createTask({ title: 'Linked by hand' })
+  store.linkSession('s-human', task.id, { title: 'Old chat', link: 'https://app.t3.codes/threads/env/s-human' }, 'human')
+  const linked = store.getTask(task.id)
+  assert.equal(linked.sessions[0].link, 'https://app.t3.codes/threads/env/s-human')
+  assert.equal(linked.events[0].actor, 'human')
+  assert.equal(linked.events[0].text, 'Session joined: Old chat')
+})

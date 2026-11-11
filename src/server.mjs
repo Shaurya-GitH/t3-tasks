@@ -20,6 +20,8 @@ const routes = [
   ['POST', /^\/api\/tasks\/(\d+)\/criteria$/, ([id], body) => store.addCriterion(id, body.text, 'human')],
   ['PATCH', /^\/api\/criteria\/(\d+)$/, ([id], body) => store.updateCriterion(id, body, 'human')],
   ['DELETE', /^\/api\/criteria\/(\d+)$/, ([id]) => (store.deleteCriterion(id), { ok: true })],
+  ['POST', /^\/api\/sessions$/, (_, body) => store.linkSession(body.thread_id, body.task_id, { title: body.title, link: body.link }, 'human')],
+  ['POST', /^\/api\/sessions$/, (_, body) => store.linkSession(body.thread_id, body.task_id, { title: body.title, link: body.link }, 'human')],
   ['DELETE', /^\/api\/sessions\/([\w:-]+)$/, ([id]) => (store.unlinkSession(id), { ok: true })],
 ]
 

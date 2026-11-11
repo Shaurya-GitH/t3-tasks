@@ -178,7 +178,8 @@ export function deleteCriterion(id) {
 }
 
 // A session works on one task at a time; linking again moves it.
-export function linkSession(threadId, taskId, { title = '', link = '' } = {}) {
+// actor is 'agent' (the session links itself) or 'human' (the user adds it from the app).
+export function linkSession(threadId, taskId, { title = '', link = '' } = {}, actor = 'agent') {
   const task = getTask(taskId)
   if (task.status === 'settled') fail(`task ${taskId} is settled; only the user can reopen it`)
   const before = taskForSession(threadId)
@@ -188,7 +189,7 @@ export function linkSession(threadId, taskId, { title = '', link = '' } = {}) {
       title = CASE WHEN excluded.title != '' THEN excluded.title ELSE title END,
       link = CASE WHEN excluded.link != '' THEN excluded.link ELSE link END
   `).run(text(threadId, 'thread id'), task.id, title, link, now())
-  if (before?.id !== task.id) log(task.id, 'agent', `Session joined${title ? `: ${title}` : ''}`)
+  if (before?.id !== task.id) log(task.id, actor, `Session joined${title ? `: ${title}` : ''}`)
   return getTask(task.id)
 }
 
