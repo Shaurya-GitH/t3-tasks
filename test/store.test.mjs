@@ -180,13 +180,15 @@ test('the HTTP API links and unlinks a session whose id needs escaping in the UR
   const port = 47000 + Math.floor(Math.random() * 1000)
   const home = mkdtempSync(join(tmpdir(), 't3-tasks-http-'))
   const server = spawn(process.execPath, ['src/server.mjs'], {
-    cwd: new URL('..', import.meta.url), env: { ...process.env, T3_TASKS_HOME: home, T3_TASKS_PORT: String(port) }, stdio: 'ignore',
+    cwd: new URL('..', import.meta.url), env: { ...process.env, T3_TASKS_HOME: home, T3_TASKS_PORT: String(port) }, stdio: ['ignore', 'pipe', 'inherit'],
   })
   try {
+    // Wait for this child to say it listens; if it exits first (port taken), fail rather than talk to another service.
+    await new Promise((resolve, reject) => {
+      server.stdout.on('data', (chunk) => { if (String(chunk).includes('T3 Tasks API')) resolve() })
+      server.once('exit', (code) => reject(new Error(`test server exited early (${code})`)))
+    })
     const api = `http://127.0.0.1:${port}/api`
-    for (let i = 0; i < 50; i++) {
-      try { await fetch(`${api}/health`); break } catch { await new Promise((r) => setTimeout(r, 50)) }
-    }
     const call = (method, path, body) => fetch(`${api}${path}`, {
       method, headers: { 'content-type': 'application/json' }, body: body && JSON.stringify(body),
     }).then(async (res) => ({ status: res.status, body: await res.json() }))
