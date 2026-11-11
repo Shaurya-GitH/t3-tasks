@@ -12,7 +12,7 @@ T3 Code session ──(MCP tools, stdio)─────┐
 T3 Code Tasks board / other apps ─(HTTP)─┘
 ```
 
-- **Agents** get the `task_*` tools and, at session start, the rules and the open tasks. They link their session to a task, read the ticket, check acceptance criteria off as they verify them, move the status (`todo`, `in_progress`, `blocked`, `done`) and leave a one-line note.
+- **Agents** get the `task_*` tools and, at session start, the rules and the open tasks. They link their session to a task, read the ticket, check acceptance criteria off as they verify them, move the status (`todo`, `in_progress`, `blocked`, `staging`, `done`) and leave a one-line note.
 - **Acceptance criteria gate done.** An agent cannot set `done` while a criterion is open, and cannot reword or remove criteria.
 - **Only you settle.** An agent cannot set `settled` and cannot change a settled task. Both rules are enforced in the store, not left to the prompt.
 - **You create tasks.** An agent never creates a task on its own. When work has no task, or a session branches into separate work, the agent asks in the chat whether to create one, and creates it only after you say yes.

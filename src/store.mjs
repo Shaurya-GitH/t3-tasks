@@ -5,7 +5,7 @@ import { mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-export const STATUSES = ['todo', 'in_progress', 'blocked', 'done', 'settled']
+export const STATUSES = ['todo', 'in_progress', 'blocked', 'staging', 'done', 'settled']
 // Task colors, kept clear of the colors T3 uses for session status (amber, indigo, sky, green, red).
 export const COLORS = ['pink', 'teal', 'purple', 'lime', 'orange', 'fuchsia']
 export const PORT = Number(process.env.T3_TASKS_PORT) || 4777
@@ -80,7 +80,7 @@ const text = (value, name) => {
   const s = typeof value === 'string' ? value.trim() : ''
   return s || fail(`${name} is required`)
 }
-const LABEL = { todo: 'To do', in_progress: 'In progress', blocked: 'Blocked', done: 'Done', settled: 'Settled' }
+const LABEL = { todo: 'To do', in_progress: 'In progress', blocked: 'Blocked', staging: 'Staging', done: 'Done', settled: 'Settled' }
 const log = (taskId, actor, message) =>
   db.prepare('INSERT INTO events (task_id, at, actor, text) VALUES (?, ?, ?, ?)').run(taskId, now(), actor, message)
 const touch = (taskId) => db.prepare('UPDATE tasks SET updated_at = ? WHERE id = ?').run(now(), taskId)

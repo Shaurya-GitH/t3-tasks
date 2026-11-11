@@ -74,7 +74,7 @@ const tools = {
     },
   },
   task_update: {
-    description: 'Update the status of a task (default: the task this session is linked to). in_progress when work starts, blocked when waiting on the user or something external, done when the work is shipped or verified. done is refused while an acceptance criterion is open. You cannot set settled: only the user settles.',
+    description: 'Update the status of a task (default: the task this session is linked to). in_progress when work starts, blocked when waiting on the user or something external, staging when the feature is fully deployed on the staging environment and being tested there, done when the work is shipped or verified. done is refused while an acceptance criterion is open. You cannot set settled: only the user settles.',
     properties: {
       status: { type: 'string', enum: store.STATUSES.filter((s) => s !== 'settled') },
       note: { type: 'string', description: 'One line: where the work stands or what it waits on' },

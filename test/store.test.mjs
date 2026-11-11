@@ -9,6 +9,9 @@ const store = await import('../src/store.mjs')
 
 test('agents move status but only the human settles', () => {
   const task = store.createTask({ title: 'Ship it' })
+  const staged = store.updateTask(task.id, { status: 'staging', status_note: 'on staging, in testing' }, 'agent')
+  assert.equal(staged.status, 'staging')
+  assert.equal(staged.events[0].text, 'Moved to Staging: on staging, in testing')
   assert.equal(store.updateTask(task.id, { status: 'done', status_note: 'merged' }, 'agent').status, 'done')
   assert.throws(() => store.updateTask(task.id, { status: 'settled' }, 'agent'), /only the user/)
   assert.equal(store.updateTask(task.id, { status: 'settled' }, 'human').status, 'settled')
