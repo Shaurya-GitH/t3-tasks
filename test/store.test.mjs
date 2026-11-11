@@ -56,3 +56,13 @@ test('new tasks go to the top; position reorders', () => {
   store.updateTask(a.id, { position: b.position - 1 }, 'human')
   assert.ok(order().indexOf(a.id) < order().indexOf(b.id))
 })
+
+test('each new task gets the color fewest open tasks use; only known colors are accepted', () => {
+  const open = store.listTasks({ includeSettled: false })
+  const counts = new Map(store.COLORS.map((c) => [c, open.filter((t) => t.color === c).length]))
+  const least = Math.min(...counts.values())
+  const task = store.createTask({ title: 'Colored' })
+  assert.equal(counts.get(task.color), least)
+  assert.equal(store.updateTask(task.id, { color: 'teal' }, 'human').color, 'teal')
+  assert.throws(() => store.updateTask(task.id, { color: 'red' }, 'human'), /color must be/)
+})

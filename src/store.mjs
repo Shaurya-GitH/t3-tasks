@@ -6,6 +6,8 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 export const STATUSES = ['todo', 'in_progress', 'blocked', 'done', 'settled']
+// Task colors, kept clear of the colors T3 uses for session status (amber, indigo, sky, green, red).
+export const COLORS = ['pink', 'teal', 'purple', 'lime', 'orange', 'fuchsia']
 export const PORT = Number(process.env.T3_TASKS_PORT) || 4777
 
 const dir = process.env.T3_TASKS_HOME || join(homedir(), '.t3-tasks')
@@ -50,8 +52,22 @@ db.exec(`
 `)
 // Added after the first release: the card's place in its column (lower is higher up).
 try { db.exec('ALTER TABLE tasks ADD COLUMN position REAL NOT NULL DEFAULT 0') } catch {}
+try {
+  db.exec('ALTER TABLE tasks ADD COLUMN color TEXT')
+  for (const { id } of db.prepare('SELECT id FROM tasks ORDER BY id').all()) {
+    db.prepare('UPDATE tasks SET color = ? WHERE id = ?').run(COLORS[(id - 1) % COLORS.length], id)
+  }
+} catch {}
 
 const now = () => new Date().toISOString()
+// The color fewest open tasks use, so tasks side by side tell apart.
+const nextColor = () => {
+  const used = new Map(COLORS.map((c) => [c, 0]))
+  for (const { color } of db.prepare("SELECT color FROM tasks WHERE status != 'settled'").all()) {
+    if (used.has(color)) used.set(color, used.get(color) + 1)
+  }
+  return COLORS.reduce((best, c) => (used.get(c) < used.get(best) ? c : best))
+}
 const fail = (message) => { throw new Error(message) }
 const text = (value, name) => {
   const s = typeof value === 'string' ? value.trim() : ''
@@ -90,8 +106,8 @@ export function createTask({ title, notes = '', status = 'todo', source = 'manua
   // New cards go to the top of their column.
   const top = db.prepare('SELECT MIN(position) AS p FROM tasks').get().p ?? 0
   const id = Number(db.prepare(
-    'INSERT INTO tasks (title, notes, status, source, external_id, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(title, String(notes), status, String(source), external_id == null ? null : String(external_id), top - 1, t, t).lastInsertRowid)
+    'INSERT INTO tasks (title, notes, status, source, external_id, position, color, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(title, String(notes), status, String(source), external_id == null ? null : String(external_id), top - 1, nextColor(), t, t).lastInsertRowid)
   log(id, actor, 'Created the task')
   for (const c of acceptance_criteria) db.prepare('INSERT INTO criteria (task_id, text) VALUES (?, ?)').run(id, text(c, 'criterion'))
   return getTask(id)
@@ -100,7 +116,7 @@ export function createTask({ title, notes = '', status = 'todo', source = 'manua
 // actor is 'agent' or 'human'. Settling is the human's call alone, a settled
 // task stays as the human left it, and an agent cannot call a task done while
 // an acceptance criterion is still open.
-export function updateTask(id, { title, notes, status, status_note, position }, actor) {
+export function updateTask(id, { title, notes, status, status_note, position, color }, actor) {
   const task = getTask(id)
   if (actor === 'agent' && task.status === 'settled') fail(`task ${id} is settled; only the user can reopen it`)
   if (status !== undefined) {
@@ -111,12 +127,14 @@ export function updateTask(id, { title, notes, status, status_note, position }, 
       fail(`not done yet: ${open.length} acceptance criteria are open (${open.map((c) => `#${c.id} ${c.text}`).join('; ')}). Meet them and check them off with task_check, or set blocked and say why.`)
     }
   }
-  db.prepare('UPDATE tasks SET title = ?, notes = ?, status = ?, status_note = ?, position = ?, updated_at = ? WHERE id = ?').run(
+  if (color !== undefined && !COLORS.includes(color)) fail(`color must be one of ${COLORS.join(', ')}`)
+  db.prepare('UPDATE tasks SET title = ?, notes = ?, status = ?, status_note = ?, position = ?, color = ?, updated_at = ? WHERE id = ?').run(
     title === undefined ? task.title : text(title, 'title'),
     notes === undefined ? task.notes : String(notes),
     status ?? task.status,
     status_note === undefined ? task.status_note : String(status_note),
     typeof position === 'number' ? position : task.position,
+    color ?? task.color,
     now(), task.id
   )
   const moved = status !== undefined && status !== task.status
