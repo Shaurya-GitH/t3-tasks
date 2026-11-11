@@ -66,3 +66,31 @@ test('each new task gets the color fewest open tasks use; only known colors are 
   assert.equal(store.updateTask(task.id, { color: 'teal' }, 'human').color, 'teal')
   assert.throws(() => store.updateTask(task.id, { color: 'red' }, 'human'), /color must be/)
 })
+
+test('startup resumes a partial color backfill without changing assigned colors', async () => {
+  const { DatabaseSync } = await import('node:sqlite')
+  const dir = mkdtempSync(join(tmpdir(), 't3-tasks-migration-'))
+  const db = new DatabaseSync(join(dir, 'tasks.db'))
+  db.exec(`
+    CREATE TABLE tasks (
+      id INTEGER PRIMARY KEY, title TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'todo', status_note TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'manual', external_id TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      position REAL NOT NULL DEFAULT 0, color TEXT,
+      UNIQUE (source, external_id)
+    );
+    INSERT INTO tasks (id, title, created_at, updated_at, color)
+      VALUES (1, 'Assigned', '', '', 'orange'), (2, 'Interrupted', '', '', NULL);
+  `)
+  const { spawnSync } = await import('node:child_process')
+  for (let i = 0; i < 2; i++) {
+    const run = spawnSync(process.execPath, ['--input-type=module', '-e', "await import('./src/store.mjs')"], {
+      cwd: new URL('..', import.meta.url),
+      env: { ...process.env, T3_TASKS_HOME: dir }, encoding: 'utf8',
+    })
+    assert.equal(run.status, 0, run.stderr)
+    assert.deepEqual(db.prepare('SELECT color FROM tasks ORDER BY id').all().map((row) => row.color), ['orange', 'teal'])
+  }
+  db.close()
+})

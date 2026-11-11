@@ -52,12 +52,10 @@ db.exec(`
 `)
 // Added after the first release: the card's place in its column (lower is higher up).
 try { db.exec('ALTER TABLE tasks ADD COLUMN position REAL NOT NULL DEFAULT 0') } catch {}
-try {
-  db.exec('ALTER TABLE tasks ADD COLUMN color TEXT')
-  for (const { id } of db.prepare('SELECT id FROM tasks ORDER BY id').all()) {
-    db.prepare('UPDATE tasks SET color = ? WHERE id = ?').run(COLORS[(id - 1) % COLORS.length], id)
-  }
-} catch {}
+try { db.exec('ALTER TABLE tasks ADD COLUMN color TEXT') } catch {}
+for (const { id } of db.prepare('SELECT id FROM tasks WHERE color IS NULL ORDER BY id').all()) {
+  db.prepare('UPDATE tasks SET color = ? WHERE id = ?').run(COLORS[(id - 1) % COLORS.length], id)
+}
 
 const now = () => new Date().toISOString()
 // The color fewest open tasks use, so tasks side by side tell apart.
