@@ -61,7 +61,7 @@ const tools = {
     },
   },
   task_create: {
-    description: 'Create a task and link this session to it. Only when the user explicitly asks you to create a task. In every other case, including work that has no matching task, use task_suggest: the user decides what goes on their list.',
+    description: 'Create a task and link this session to it. Tasks are the user\'s to create: call this only after the user said yes, in this chat, to creating this task (their own request, or their yes to your suggestion). Never on your own initiative.',
     properties: {
       title: { type: 'string', description: 'Short outcome, e.g. "Ship Klarna refund fix"' },
       description: { type: 'string', description: 'What the user asked for and why, in a few lines' },
@@ -87,12 +87,6 @@ const tools = {
       if (threadId && store.taskForSession(threadId)?.id === task.id) store.linkSession(threadId, task.id, await sessionInfo()) // refresh the session title
       return brief(task)
     },
-  },
-  task_suggest: {
-    description: 'Suggest a new task to the user. Use when the session is drifting away from its task or you found separable work that branches out. The user accepts or dismisses it in the task list; you do not create it.',
-    properties: { title: { type: 'string' }, reason: { type: 'string', description: 'Why this is separate work' } },
-    required: ['title', 'reason'],
-    run: ({ title, reason }) => ({ suggestion_id: store.addSuggestion({ title, reason, thread_id: threadId || null }) }),
   },
 }
 

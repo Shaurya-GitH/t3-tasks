@@ -34,13 +34,6 @@ db.exec(`
     link TEXT NOT NULL DEFAULT '',
     linked_at TEXT NOT NULL
   );
-  CREATE TABLE IF NOT EXISTS suggestions (
-    id INTEGER PRIMARY KEY,
-    title TEXT NOT NULL,
-    reason TEXT NOT NULL DEFAULT '',
-    thread_id TEXT,
-    created_at TEXT NOT NULL
-  );
   CREATE TABLE IF NOT EXISTS criteria (
     id INTEGER PRIMARY KEY,
     task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -190,20 +183,4 @@ export function unlinkSession(threadId) {
 export function taskForSession(threadId) {
   const row = db.prepare('SELECT task_id FROM sessions WHERE thread_id = ?').get(String(threadId))
   return row ? getTask(row.task_id) : null
-}
-
-export function addSuggestion({ title, reason = '', thread_id = null }) {
-  const { lastInsertRowid } = db.prepare(
-    'INSERT INTO suggestions (title, reason, thread_id, created_at) VALUES (?, ?, ?, ?)'
-  ).run(text(title, 'title'), String(reason), thread_id, now())
-  return Number(lastInsertRowid)
-}
-
-export const listSuggestions = () => db.prepare('SELECT * FROM suggestions ORDER BY id DESC').all()
-
-export function resolveSuggestion(id, accept) {
-  const s = db.prepare('SELECT * FROM suggestions WHERE id = ?').get(Number(id))
-  if (!s) fail(`no suggestion ${id}`)
-  db.prepare('DELETE FROM suggestions WHERE id = ?').run(s.id)
-  return accept ? createTask({ title: s.title, notes: s.reason, source: 'suggestion' }) : null
 }

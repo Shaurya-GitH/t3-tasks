@@ -15,7 +15,7 @@ T3 Code Tasks board / other apps ─(HTTP)─┘
 - **Agents** get the `task_*` tools and, at session start, the rules and the open tasks. They link their session to a task, read the ticket, check acceptance criteria off as they verify them, move the status (`todo`, `in_progress`, `blocked`, `done`) and leave a one-line note.
 - **Acceptance criteria gate done.** An agent cannot set `done` while a criterion is open, and cannot reword or remove criteria.
 - **Only you settle.** An agent cannot set `settled` and cannot change a settled task. Both rules are enforced in the store, not left to the prompt.
-- **Suggestions.** When a session drifts from its task or finds work that branches out, the agent calls `task_suggest`. It shows on the board for you to add or dismiss.
+- **You create tasks.** An agent never creates a task on its own. When work has no task, or a session branches into separate work, the agent asks in the chat whether to create one, and creates it only after you say yes.
 
 ## Install
 
@@ -35,13 +35,12 @@ Everything the board does goes through the HTTP API on `127.0.0.1:4777`, so a sy
 
 | Call | Does |
 | --- | --- |
-| `GET /api/tasks` | All tasks (with sessions, criteria and history) and open suggestions |
+| `GET /api/tasks` | All tasks (with sessions, criteria and history) |
 | `POST /api/tasks` `{title, notes?, status?, acceptance_criteria?, source?, external_id?}` | Create a task. With `source` + `external_id` it is an upsert: sending the same item again updates it |
 | `PATCH /api/tasks/:id` `{title?, notes?, status?, status_note?, position?}` | Change a task |
 | `POST /api/tasks/:id/criteria` `{text}` · `PATCH /api/criteria/:id` `{text?, done?}` · `DELETE /api/criteria/:id` | Acceptance criteria |
 | `DELETE /api/sessions/:thread_id` | Unlink a session from its task |
 | `DELETE /api/tasks/:id` | Delete a task |
-| `POST /api/suggestions/:id/accept` · `DELETE /api/suggestions/:id` | Accept or dismiss a suggestion |
 
 ```sh
 curl -X POST 127.0.0.1:4777/api/tasks -H 'content-type: application/json' \

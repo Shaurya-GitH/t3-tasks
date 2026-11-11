@@ -34,13 +34,6 @@ test('third-party tasks are idempotent on (source, external_id)', () => {
   assert.equal(again.title, 'Renamed')
 })
 
-test('an accepted suggestion becomes a task', () => {
-  const id = store.addSuggestion({ title: 'Fix flaky test', reason: 'found while shipping A', thread_id: 's1' })
-  const task = store.resolveSuggestion(id, true)
-  assert.equal(task.title, 'Fix flaky test')
-  assert.equal(store.listSuggestions().length, 0)
-})
-
 test('acceptance criteria gate done for agents, not for the human', () => {
   const task = store.createTask({ title: 'Ticket', acceptance_criteria: ['Tests pass', 'Docs updated'] }, 'agent')
   const [a, b] = task.criteria

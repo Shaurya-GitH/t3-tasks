@@ -10,7 +10,7 @@ const HOSTS = [`127.0.0.1:${store.PORT}`, `localhost:${store.PORT}`]
 const ORIGINS = ['t3code://app', 't3code-dev://app', ...HOSTS.map((h) => `http://${h}`),
   ...(process.env.T3_TASKS_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean)]
 
-const board = () => ({ tasks: store.listTasks(), suggestions: store.listSuggestions() })
+const board = () => ({ tasks: store.listTasks() })
 const routes = [
   ['GET', /^\/api\/health$/, () => ({ ok: true })],
   ['GET', /^\/api\/tasks$/, board],
@@ -21,8 +21,6 @@ const routes = [
   ['PATCH', /^\/api\/criteria\/(\d+)$/, ([id], body) => store.updateCriterion(id, body, 'human')],
   ['DELETE', /^\/api\/criteria\/(\d+)$/, ([id]) => (store.deleteCriterion(id), { ok: true })],
   ['DELETE', /^\/api\/sessions\/([\w:-]+)$/, ([id]) => (store.unlinkSession(id), { ok: true })],
-  ['POST', /^\/api\/suggestions\/(\d+)\/accept$/, ([id]) => store.resolveSuggestion(id, true)],
-  ['DELETE', /^\/api\/suggestions\/(\d+)$/, ([id]) => (store.resolveSuggestion(id, false), { ok: true })],
 ]
 
 const server = createServer(async (req, res) => {
