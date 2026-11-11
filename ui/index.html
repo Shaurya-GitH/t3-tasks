@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Tasks</title>
+<style>
+  :root {
+    --bg: #fbfbfa; --fg: #1c1c1a; --muted: #77756f; --line: #e6e4df; --hover: #f1f0ec;
+    --accent: #2f6fde; --todo: #a3a19a; --in_progress: #2f6fde; --blocked: #d9822b; --done: #3a9a5c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --fg: #ecebe7; --muted: #8f8d86; --line: #2b2a28; --hover: #20201e; --accent: #6ea0ff; --in_progress: #6ea0ff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 12px 14px 40px; background: var(--bg); color: var(--fg); font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width: 560px; margin: 0 auto; }
+  form { display: flex; margin-bottom: 14px; }
+  input[type=text] { flex: 1; min-width: 0; padding: 7px 10px; border: 1px solid var(--line); border-radius: 7px; background: transparent; color: inherit; font: inherit; }
+  input[type=text]:focus-visible, button:focus-visible, select:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  h2 { margin: 16px 0 4px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  h2 span { font-weight: 400; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li.task { padding: 7px 6px; border-radius: 7px; display: grid; grid-template-columns: 14px 1fr auto; gap: 0 8px; align-items: start; }
+  li.task:hover { background: var(--hover); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; background: var(--todo); }
+  .title { overflow-wrap: anywhere; }
+  .settled .title { color: var(--muted); text-decoration: line-through; }
+  .sub { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+  .sessions { margin-top: 2px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .sessions a { color: var(--muted); font-size: 11.5px; text-decoration: none; border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sessions a:hover { color: var(--fg); border-color: var(--muted); }
+  .actions { display: flex; gap: 4px; align-items: center; opacity: 0; }
+  li:hover .actions, li:focus-within .actions, .actions.keep { opacity: 1; }
+  button, select { font: inherit; font-size: 12px; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 6px; padding: 2px 7px; cursor: pointer; }
+  button:hover, select:hover { color: var(--fg); border-color: var(--muted); }
+  button.primary { color: var(--accent); border-color: currentColor; }
+  li.suggestion { padding: 7px 8px; margin-bottom: 4px; border: 1px dashed var(--line); border-radius: 7px; display: grid; grid-template-columns: 1fr auto; gap: 0 8px; }
+  li.suggestion .actions { opacity: 1; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; font-weight: 600; margin: 16px 0 4px; }
+  .empty { color: var(--muted); padding: 24px 0; text-align: center; }
+  #error { color: var(--blocked); font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <form id="add"><input type="text" id="new" placeholder="Add a task…" aria-label="Add a task" autocomplete="off"></form>
+  <div id="error" role="status"></div>
+  <div id="list"></div>
+</main>
+<script>
+const GROUPS = [['in_progress', 'In progress'], ['blocked', 'Blocked'], ['todo', 'To do'], ['done', 'Done · waiting for you to settle']]
+const LABEL = { todo: 'To do', in_progress: 'In progress', blocked: 'Blocked', done: 'Done', settled: 'Settled' }
+const list = document.getElementById('list'), error = document.getElementById('error')
+let last = '', settledOpen = false
+
+const el = (tag, props = {}, ...kids) => {
+  const n = Object.assign(document.createElement(tag), props)
+  n.append(...kids.filter(Boolean))
+  return n
+}
+async function api(method, path, body) {
+  const res = await fetch('/api' + path, { method, headers: { 'content-type': 'application/json' }, body: body && JSON.stringify(body) })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error)
+  return data
+}
+const act = (method, path, body) => api(method, path, body).then(refresh, (e) => { error.textContent = e.message })
+
+function taskRow(t) {
+  const dot = el('span', { className: 'dot', title: LABEL[t.status] })
+  dot.style.background = `var(--${t.status}, var(--todo))`
+  const status = el('select', { ariaLabel: 'Status', onchange: (e) => act('PATCH', `/tasks/${t.id}`, { status: e.target.value }) },
+    ...Object.entries(LABEL).map(([value, textContent]) => el('option', { value, textContent, selected: value === t.status })))
+  const settle = t.status === 'done' && el('button', { className: 'primary', textContent: 'Settle', onclick: () => act('PATCH', `/tasks/${t.id}`, { status: 'settled' }) })
+  const remove = el('button', { textContent: '×', title: 'Delete task', ariaLabel: 'Delete task', onclick: () => confirm(`Delete "${t.title}"?`) && act('DELETE', `/tasks/${t.id}`) })
+  return el('li', { className: 'task ' + t.status },
+    dot,
+    el('div', {},
+      el('div', { className: 'title', textContent: t.title }),
+      t.status_note && el('div', { className: 'sub', textContent: t.status_note }),
+      t.sessions.length && el('div', { className: 'sessions' }, ...t.sessions.map((s) => {
+        const name = s.title || 'Session ' + s.thread_id.slice(0, 8)
+        return el('a', { textContent: name, title: name, href: s.link || '#', target: '_blank', rel: 'noreferrer' })
+      }))),
+    el('div', { className: 'actions' + (settle ? ' keep' : '') }, settle, status, remove))
+}
+
+function render({ tasks, suggestions }) {
+  const out = []
+  if (suggestions.length) out.push(el('h2', { textContent: 'Suggested by agents' }), el('ul', {}, ...suggestions.map((s) =>
+    el('li', { className: 'suggestion' },
+      el('div', {}, el('div', { className: 'title', textContent: s.title }), el('div', { className: 'sub', textContent: s.reason })),
+      el('div', { className: 'actions' },
+        el('button', { className: 'primary', textContent: 'Add', onclick: () => act('POST', `/suggestions/${s.id}/accept`) }),
+        el('button', { textContent: 'Dismiss', onclick: () => act('DELETE', `/suggestions/${s.id}`) }))))))
+  for (const [status, label] of GROUPS) {
+    const group = tasks.filter((t) => t.status === status)
+    if (group.length) out.push(el('h2', {}, label + ' ', el('span', { textContent: group.length })), el('ul', {}, ...group.map(taskRow)))
+  }
+  const settled = tasks.filter((t) => t.status === 'settled')
+  if (settled.length) out.push(el('details', { open: settledOpen, ontoggle: (e) => { settledOpen = e.target.open } },
+    el('summary', { textContent: `Settled ${settled.length}` }), el('ul', {}, ...settled.map(taskRow))))
+  if (!out.length) out.push(el('div', { className: 'empty', textContent: 'No tasks yet. Add one above, or let a session create it.' }))
+  list.replaceChildren(...out)
+}
+
+async function refresh() {
+  try {
+    const data = await api('GET', '/tasks'), json = JSON.stringify(data)
+    error.textContent = ''
+    // Redraw only on change, and never while a status menu is open.
+    if (json !== last && document.activeElement?.tagName !== 'SELECT') { last = json; render(data) }
+  } catch (e) { error.textContent = 'Task service unreachable: ' + e.message }
+}
+
+document.getElementById('add').onsubmit = (e) => {
+  e.preventDefault()
+  const input = document.getElementById('new'), title = input.value.trim()
+  if (title) { input.value = ''; act('POST', '/tasks', { title }) }
+}
+refresh()
+setInterval(refresh, 3000) // ponytail: polling; switch to server-sent events if 3s feels slow
+</script>
+</body>
+</html>

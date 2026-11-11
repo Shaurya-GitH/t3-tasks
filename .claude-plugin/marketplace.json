@@ -1,0 +1,5 @@
+{
+  "name": "t3-tasks",
+  "owner": { "name": "Shaurya-GitH" },
+  "plugins": [{ "name": "t3-tasks", "source": "./", "description": "A to-do list above your sessions, kept current by the agents." }]
+}
