@@ -124,44 +124,52 @@ export function createTask({ title, notes = '', status = 'todo', source = 'manua
 // task stays as the human left it, and an agent cannot call a task done while
 // an acceptance criterion is still open.
 export function updateTask(id, { title, notes, status, status_note, position, color, expected_settled_at, session_marks }, actor) {
-  const task = getTask(id)
-  if (actor === 'agent' && task.status === 'settled') fail(`task ${id} is settled; only the user can reopen it`)
-  if (status !== undefined) {
-    if (!STATUSES.includes(status)) fail(`status must be one of ${STATUSES.join(', ')}`)
-    if (actor === 'agent' && status === 'settled') fail('only the user can settle a task')
-    const open = task.criteria.filter((c) => !c.done)
-    if (actor === 'agent' && status === 'done' && open.length) {
-      fail(`not done yet: ${open.length} acceptance criteria are open (${open.map((c) => `#${c.id} ${c.text}`).join('; ')}). Meet them and check them off with task_check, or set blocked and say why.`)
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    const task = getTask(id)
+    if (actor === 'agent' && task.status === 'settled') fail(`task ${id} is settled; only the user can reopen it`)
+    if (status !== undefined) {
+      if (!STATUSES.includes(status)) fail(`status must be one of ${STATUSES.join(', ')}`)
+      if (actor === 'agent' && status === 'settled') fail('only the user can settle a task')
+      const open = task.criteria.filter((c) => !c.done)
+      if (actor === 'agent' && status === 'done' && open.length) {
+        fail(`not done yet: ${open.length} acceptance criteria are open (${open.map((c) => `#${c.id} ${c.text}`).join('; ')}). Meet them and check them off with task_check, or set blocked and say why.`)
+      }
     }
+    if (color !== undefined && !COLORS.includes(color)) fail(`color must be one of ${COLORS.join(', ')}`)
+    if (expected_settled_at !== undefined && typeof expected_settled_at !== 'string') fail('expected_settled_at must be a string')
+    const marks = Object.entries(session_marks ?? {})
+    if (typeof (session_marks ?? {}) !== 'object' || marks.some(([, v]) => typeof v !== 'string')) fail('session_marks must map thread ids to strings')
+    const nextStatus = status ?? task.status
+    const settledAt = nextStatus !== 'settled' ? null : task.status === 'settled' ? task.settled_at : now()
+    const result = db.prepare(`UPDATE tasks SET title = ?, notes = ?, status = ?, status_note = ?, position = ?, color = ?, settled_at = ?, updated_at = ?
+      WHERE id = ? AND (? IS NULL OR (status = 'settled' AND settled_at = ?))`).run(
+      title === undefined ? task.title : text(title, 'title'),
+      notes === undefined ? task.notes : String(notes),
+      nextStatus,
+      status_note === undefined ? task.status_note : String(status_note),
+      typeof position === 'number' ? position : task.position,
+      color ?? task.color,
+      settledAt,
+      now(), task.id, expected_settled_at ?? null, expected_settled_at ?? null
+    )
+    if (result.changes === 0) fail('task settlement changed; refresh before reopening')
+    if (nextStatus !== 'settled') db.prepare('UPDATE sessions SET settle_mark = NULL WHERE task_id = ?').run(task.id)
+    else if (task.status !== 'settled') {
+      const mark = db.prepare('UPDATE sessions SET settle_mark = ? WHERE thread_id = ? AND task_id = ?')
+      for (const [threadId, at] of marks) mark.run(at, threadId, task.id)
+    }
+    const moved = status !== undefined && status !== task.status
+    if (moved || (status_note && status_note !== task.status_note)) {
+      log(task.id, actor, [moved && `Moved to ${LABEL[status]}`, status_note].filter(Boolean).join(': '))
+    }
+    const updated = getTask(task.id)
+    db.exec('COMMIT')
+    return updated
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
   }
-  if (color !== undefined && !COLORS.includes(color)) fail(`color must be one of ${COLORS.join(', ')}`)
-  if (expected_settled_at !== undefined && typeof expected_settled_at !== 'string') fail('expected_settled_at must be a string')
-  const marks = Object.entries(session_marks ?? {})
-  if (typeof (session_marks ?? {}) !== 'object' || marks.some(([, v]) => typeof v !== 'string')) fail('session_marks must map thread ids to strings')
-  const nextStatus = status ?? task.status
-  const settledAt = nextStatus !== 'settled' ? null : task.status === 'settled' ? task.settled_at : now()
-  const result = db.prepare(`UPDATE tasks SET title = ?, notes = ?, status = ?, status_note = ?, position = ?, color = ?, settled_at = ?, updated_at = ?
-    WHERE id = ? AND (? IS NULL OR (status = 'settled' AND settled_at = ?))`).run(
-    title === undefined ? task.title : text(title, 'title'),
-    notes === undefined ? task.notes : String(notes),
-    nextStatus,
-    status_note === undefined ? task.status_note : String(status_note),
-    typeof position === 'number' ? position : task.position,
-    color ?? task.color,
-    settledAt,
-    now(), task.id, expected_settled_at ?? null, expected_settled_at ?? null
-  )
-  if (result.changes === 0) fail('task settlement changed; refresh before reopening')
-  if (nextStatus !== 'settled') db.prepare('UPDATE sessions SET settle_mark = NULL WHERE task_id = ?').run(task.id)
-  else if (task.status !== 'settled') {
-    const mark = db.prepare('UPDATE sessions SET settle_mark = ? WHERE thread_id = ? AND task_id = ?')
-    for (const [threadId, at] of marks) mark.run(at, threadId, task.id)
-  }
-  const moved = status !== undefined && status !== task.status
-  if (moved || (status_note && status_note !== task.status_note)) {
-    log(task.id, actor, [moved && `Moved to ${LABEL[status]}`, status_note].filter(Boolean).join(': '))
-  }
-  return getTask(task.id)
 }
 
 export function deleteTask(id) {

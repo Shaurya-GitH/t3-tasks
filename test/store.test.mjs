@@ -162,6 +162,40 @@ test('settling stores each session\'s mark; leaving Settled or moving the sessio
   assert.deepEqual(marks(task.id), [null])
 })
 
+test('settling rolls back status, marks and history if a mark or event write fails', async () => {
+  const { DatabaseSync } = await import('node:sqlite')
+  const db = new DatabaseSync(join(process.env.T3_TASKS_HOME, 'tasks.db'))
+  try {
+    for (const stage of ['mark', 'event']) {
+      const task = store.createTask({ title: `Atomic ${stage}` })
+      const first = `atomic-${stage}-1`, second = `atomic-${stage}-2`
+      store.linkSession(first, task.id)
+      store.linkSession(second, task.id)
+      const before = store.getTask(task.id)
+      db.exec(stage === 'mark'
+        ? `CREATE TRIGGER reject_settle BEFORE UPDATE OF settle_mark ON sessions
+            WHEN NEW.thread_id = '${second}' AND NEW.settle_mark IS NOT NULL
+            BEGIN SELECT RAISE(ABORT, 'injected mark failure'); END`
+        : `CREATE TRIGGER reject_settle BEFORE INSERT ON events
+            WHEN NEW.task_id = ${task.id}
+            BEGIN SELECT RAISE(ABORT, 'injected event failure'); END`)
+      const patch = { status: 'settled', session_marks: { [first]: '', [second]: '' } }
+      try {
+        assert.throws(() => store.updateTask(task.id, patch, 'human'), /injected/)
+        assert.deepEqual(store.getTask(task.id), before)
+      } finally {
+        db.exec('DROP TRIGGER reject_settle')
+      }
+      const settled = store.updateTask(task.id, patch, 'human')
+      assert.equal(settled.status, 'settled')
+      assert.deepEqual(settled.sessions.map((s) => s.settle_mark), ['', ''])
+      assert.equal(settled.events.length, before.events.length + 1)
+    }
+  } finally {
+    db.close()
+  }
+})
+
 test('startup gives tasks settled before settled_at existed the time of their last move to Settled', async () => {
   const { DatabaseSync } = await import('node:sqlite')
   const dir = mkdtempSync(join(tmpdir(), 't3-tasks-settled-'))
