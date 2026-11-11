@@ -29,6 +29,17 @@ claude plugin install t3-tasks@t3-tasks
 
 New sessions pick it up. The service starts with the first session; `npm start` starts it by hand.
 
+### Upgrade to 0.3.0
+
+Apply the update in this order:
+
+1. Install the T3 Code app release with the Staging column.
+2. Update `~/dev/t3-tasks` to 0.3.0.
+3. Stop the existing T3 Tasks HTTP service on port 4777 through the terminal or process manager that started it. Start it again from the updated checkout with `cd ~/dev/t3-tasks && npm start`.
+4. Update the installed Claude plugin to 0.3.0 and start a new session.
+
+Updating the plugin does not restart the HTTP service. A new session leaves an existing service running when its health check succeeds. The 0.2.0 service rejects moves to `staging`.
+
 ## Connect another app
 
 Everything the board does goes through the HTTP API on `127.0.0.1:4777`, so a sync script for ClickUp, Linear, GitHub Issues and so on needs nothing else.
