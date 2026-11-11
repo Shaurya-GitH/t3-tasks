@@ -103,3 +103,18 @@ test('the user can add a session to a task from the app; the history says who', 
   assert.equal(linked.events[0].actor, 'human')
   assert.equal(linked.events[0].text, 'Session joined: Old chat')
 })
+
+test('malformed session links are rejected before adding or moving a session', () => {
+  const a = store.createTask({ title: 'Original task' }), b = store.createTask({ title: 'Target task' })
+  const link = 'https://app.t3.codes/threads/env/mcp%3Asafe'
+  store.linkSession('s-uri', a.id, { title: 'Original session', link }, 'human')
+  for (const invalid of ['https://app.t3.codes/threads/%/session-1', 'https://app.t3.codes/threads/env/%FF']) {
+    assert.throws(() => store.linkSession('s-new-uri', b.id, { link: invalid }, 'human'), /malformed URI/)
+    assert.throws(() => store.linkSession('s-uri', b.id, { link: invalid }, 'human'), /malformed URI/)
+  }
+  assert.equal(store.taskForSession('s-new-uri'), null)
+  assert.equal(store.taskForSession('s-uri').id, a.id)
+  assert.equal(store.getTask(a.id).sessions[0].link, link)
+  assert.equal(store.getTask(b.id).sessions.length, 0)
+  assert.equal(store.getTask(b.id).events.length, 1)
+})

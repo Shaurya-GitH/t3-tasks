@@ -180,6 +180,7 @@ export function deleteCriterion(id) {
 // A session works on one task at a time; linking again moves it.
 // actor is 'agent' (the session links itself) or 'human' (the user adds it from the app).
 export function linkSession(threadId, taskId, { title = '', link = '' } = {}, actor = 'agent') {
+  try { decodeURI(link) } catch { fail('link has malformed URI escapes') }
   const task = getTask(taskId)
   if (task.status === 'settled') fail(`task ${taskId} is settled; only the user can reopen it`)
   const before = taskForSession(threadId)
