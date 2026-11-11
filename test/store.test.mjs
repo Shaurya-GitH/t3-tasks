@@ -119,13 +119,25 @@ test('malformed session links are rejected before adding or moving a session', (
   assert.equal(store.getTask(b.id).events.length, 1)
 })
 
-test('a task records when it was settled, and forgets it when reopened', () => {
+test('a task records when it was settled, and forgets it when reopened', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-11T12:00:00.000Z') })
   const task = store.createTask({ title: 'Settle me' })
   assert.equal(task.settled_at, null)
   const settled = store.updateTask(task.id, { status: 'settled' }, 'human')
   assert.ok(Date.parse(settled.settled_at) > 0)
   assert.equal(store.updateTask(task.id, { color: 'teal' }, 'human').settled_at, settled.settled_at)
   assert.equal(store.updateTask(task.id, { status: 'in_progress', status_note: 'Reopened' }, 'human').settled_at, null)
+  t.mock.timers.tick(1)
+  const resettled = store.updateTask(task.id, { status: 'settled' }, 'human')
+  const staleReopen = { status: 'in_progress', expected_settled_at: settled.settled_at }
+  assert.throws(() => store.updateTask(task.id, staleReopen, 'human'), /settlement changed/)
+  assert.deepEqual(store.getTask(task.id), resettled)
+  assert.equal(store.updateTask(task.id, {
+    status: 'in_progress', expected_settled_at: resettled.settled_at,
+  }, 'human').status, 'in_progress')
+  assert.throws(() => store.updateTask(task.id, {
+    status: 'in_progress', expected_settled_at: resettled.settled_at,
+  }, 'human'), /settlement changed/)
 })
 
 test('startup gives tasks settled before settled_at existed the time of their last move to Settled', async () => {

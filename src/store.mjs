@@ -120,7 +120,7 @@ export function createTask({ title, notes = '', status = 'todo', source = 'manua
 // actor is 'agent' or 'human'. Settling is the human's call alone, a settled
 // task stays as the human left it, and an agent cannot call a task done while
 // an acceptance criterion is still open.
-export function updateTask(id, { title, notes, status, status_note, position, color }, actor) {
+export function updateTask(id, { title, notes, status, status_note, position, color, expected_settled_at }, actor) {
   const task = getTask(id)
   if (actor === 'agent' && task.status === 'settled') fail(`task ${id} is settled; only the user can reopen it`)
   if (status !== undefined) {
@@ -132,9 +132,11 @@ export function updateTask(id, { title, notes, status, status_note, position, co
     }
   }
   if (color !== undefined && !COLORS.includes(color)) fail(`color must be one of ${COLORS.join(', ')}`)
+  if (expected_settled_at !== undefined && typeof expected_settled_at !== 'string') fail('expected_settled_at must be a string')
   const nextStatus = status ?? task.status
   const settledAt = nextStatus !== 'settled' ? null : task.status === 'settled' ? task.settled_at : now()
-  db.prepare('UPDATE tasks SET title = ?, notes = ?, status = ?, status_note = ?, position = ?, color = ?, settled_at = ?, updated_at = ? WHERE id = ?').run(
+  const result = db.prepare(`UPDATE tasks SET title = ?, notes = ?, status = ?, status_note = ?, position = ?, color = ?, settled_at = ?, updated_at = ?
+    WHERE id = ? AND (? IS NULL OR (status = 'settled' AND settled_at = ?))`).run(
     title === undefined ? task.title : text(title, 'title'),
     notes === undefined ? task.notes : String(notes),
     nextStatus,
@@ -142,8 +144,9 @@ export function updateTask(id, { title, notes, status, status_note, position, co
     typeof position === 'number' ? position : task.position,
     color ?? task.color,
     settledAt,
-    now(), task.id
+    now(), task.id, expected_settled_at ?? null, expected_settled_at ?? null
   )
+  if (result.changes === 0) fail('task settlement changed; refresh before reopening')
   const moved = status !== undefined && status !== task.status
   if (moved || (status_note && status_note !== task.status_note)) {
     log(task.id, actor, [moved && `Moved to ${LABEL[status]}`, status_note].filter(Boolean).join(': '))
