@@ -62,6 +62,9 @@ try { db.exec('ALTER TABLE tasks ADD COLUMN settled_at TEXT') } catch {}
 db.exec(`UPDATE tasks SET settled_at = COALESCE(
   (SELECT MAX(at) FROM events WHERE events.task_id = tasks.id AND text LIKE 'Moved to Settled%'), updated_at)
   WHERE status = 'settled' AND settled_at IS NULL`)
+// Each session's last user message as its own server reported it when the task was settled ('' when
+// it had none), so the app can tell a later message without comparing two machines' clocks.
+try { db.exec('ALTER TABLE sessions ADD COLUMN settle_mark TEXT') } catch {}
 
 const now = () => new Date().toISOString()
 // The color fewest open tasks use, so tasks side by side tell apart.
@@ -85,7 +88,7 @@ const touch = (taskId) => db.prepare('UPDATE tasks SET updated_at = ? WHERE id =
 export function getTask(id) {
   const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(Number(id))
   if (!task) fail(`no task ${id}`)
-  task.sessions = db.prepare('SELECT thread_id, title, link FROM sessions WHERE task_id = ? ORDER BY linked_at').all(task.id)
+  task.sessions = db.prepare('SELECT thread_id, title, link, settle_mark FROM sessions WHERE task_id = ? ORDER BY linked_at').all(task.id)
   task.criteria = db.prepare('SELECT id, text, done FROM criteria WHERE task_id = ? ORDER BY id').all(task.id)
     .map((c) => ({ ...c, done: Boolean(c.done) }))
   task.events = db.prepare('SELECT at, actor, text FROM events WHERE task_id = ? ORDER BY id DESC LIMIT 30').all(task.id)
@@ -120,7 +123,7 @@ export function createTask({ title, notes = '', status = 'todo', source = 'manua
 // actor is 'agent' or 'human'. Settling is the human's call alone, a settled
 // task stays as the human left it, and an agent cannot call a task done while
 // an acceptance criterion is still open.
-export function updateTask(id, { title, notes, status, status_note, position, color, expected_settled_at }, actor) {
+export function updateTask(id, { title, notes, status, status_note, position, color, expected_settled_at, session_marks }, actor) {
   const task = getTask(id)
   if (actor === 'agent' && task.status === 'settled') fail(`task ${id} is settled; only the user can reopen it`)
   if (status !== undefined) {
@@ -133,6 +136,8 @@ export function updateTask(id, { title, notes, status, status_note, position, co
   }
   if (color !== undefined && !COLORS.includes(color)) fail(`color must be one of ${COLORS.join(', ')}`)
   if (expected_settled_at !== undefined && typeof expected_settled_at !== 'string') fail('expected_settled_at must be a string')
+  const marks = Object.entries(session_marks ?? {})
+  if (typeof (session_marks ?? {}) !== 'object' || marks.some(([, v]) => typeof v !== 'string')) fail('session_marks must map thread ids to strings')
   const nextStatus = status ?? task.status
   const settledAt = nextStatus !== 'settled' ? null : task.status === 'settled' ? task.settled_at : now()
   const result = db.prepare(`UPDATE tasks SET title = ?, notes = ?, status = ?, status_note = ?, position = ?, color = ?, settled_at = ?, updated_at = ?
@@ -147,6 +152,11 @@ export function updateTask(id, { title, notes, status, status_note, position, co
     now(), task.id, expected_settled_at ?? null, expected_settled_at ?? null
   )
   if (result.changes === 0) fail('task settlement changed; refresh before reopening')
+  if (nextStatus !== 'settled') db.prepare('UPDATE sessions SET settle_mark = NULL WHERE task_id = ?').run(task.id)
+  else if (task.status !== 'settled') {
+    const mark = db.prepare('UPDATE sessions SET settle_mark = ? WHERE thread_id = ? AND task_id = ?')
+    for (const [threadId, at] of marks) mark.run(at, threadId, task.id)
+  }
   const moved = status !== undefined && status !== task.status
   if (moved || (status_note && status_note !== task.status_note)) {
     log(task.id, actor, [moved && `Moved to ${LABEL[status]}`, status_note].filter(Boolean).join(': '))
@@ -198,7 +208,7 @@ export function linkSession(threadId, taskId, { title = '', link = '' } = {}, ac
   const before = taskForSession(threadId)
   db.prepare(`
     INSERT INTO sessions (thread_id, task_id, title, link, linked_at) VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT (thread_id) DO UPDATE SET task_id = excluded.task_id,
+    ON CONFLICT (thread_id) DO UPDATE SET task_id = excluded.task_id, settle_mark = NULL,
       title = CASE WHEN excluded.title != '' THEN excluded.title ELSE title END,
       link = CASE WHEN excluded.link != '' THEN excluded.link ELSE link END
   `).run(text(threadId, 'thread id'), task.id, title, link, now())

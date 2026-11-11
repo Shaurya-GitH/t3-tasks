@@ -142,6 +142,26 @@ test('a task records when it was settled, and forgets it when reopened', (t) => 
   }, 'human'), /settlement changed/)
 })
 
+test('settling stores each session\'s mark; leaving Settled or moving the session clears it', () => {
+  const task = store.createTask({ title: 'Marks' })
+  const other = store.createTask({ title: 'Elsewhere' })
+  store.linkSession('m1', task.id)
+  store.linkSession('m2', task.id)
+  store.linkSession('m3', other.id)
+  const marks = (id) => store.getTask(id).sessions.map((s) => s.settle_mark)
+  assert.throws(() => store.updateTask(task.id, { status: 'settled', session_marks: { m1: 5 } }, 'human'), /session_marks/)
+  assert.equal(store.getTask(task.id).status, 'todo')
+  store.updateTask(task.id, { status: 'settled', session_marks: { m1: '2026-11-11T10:00:00.000Z', m2: '', m3: 'x' } }, 'human')
+  assert.deepEqual(marks(task.id), ['2026-11-11T10:00:00.000Z', ''])
+  assert.deepEqual(marks(other.id), [null])
+  store.updateTask(task.id, { color: 'teal', session_marks: { m1: 'later' } }, 'human')
+  assert.deepEqual(marks(task.id), ['2026-11-11T10:00:00.000Z', ''])
+  store.linkSession('m2', other.id)
+  assert.deepEqual(marks(other.id), [null, null])
+  store.updateTask(task.id, { status: 'in_progress' }, 'human')
+  assert.deepEqual(marks(task.id), [null])
+})
+
 test('startup gives tasks settled before settled_at existed the time of their last move to Settled', async () => {
   const { DatabaseSync } = await import('node:sqlite')
   const dir = mkdtempSync(join(tmpdir(), 't3-tasks-settled-'))
