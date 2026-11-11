@@ -102,6 +102,8 @@ test('the user can add a session to a task from the app; the history says who', 
   assert.equal(linked.sessions[0].link, 'https://app.t3.codes/threads/env/s-human')
   assert.equal(linked.events[0].actor, 'human')
   assert.equal(linked.events[0].text, 'Session joined: Old chat')
+  store.unlinkSession('s-human')
+  assert.equal(store.getTask(task.id).events[0].text, 'Session left: Old chat')
 })
 
 test('malformed session links are rejected before adding or moving a session', () => {
@@ -171,4 +173,33 @@ test('startup gives tasks settled before settled_at existed the time of their la
   assert.deepEqual(db.prepare('SELECT settled_at FROM tasks ORDER BY id').all().map((row) => row.settled_at),
     ['2026-11-11T12:09:23.456Z', '2026-11-11T14:00:00.000Z', null])
   db.close()
+})
+
+test('the HTTP API links and unlinks a session whose id needs escaping in the URL', async () => {
+  const { spawn } = await import('node:child_process')
+  const port = 47000 + Math.floor(Math.random() * 1000)
+  const home = mkdtempSync(join(tmpdir(), 't3-tasks-http-'))
+  const server = spawn(process.execPath, ['src/server.mjs'], {
+    cwd: new URL('..', import.meta.url), env: { ...process.env, T3_TASKS_HOME: home, T3_TASKS_PORT: String(port) }, stdio: 'ignore',
+  })
+  try {
+    const api = `http://127.0.0.1:${port}/api`
+    for (let i = 0; i < 50; i++) {
+      try { await fetch(`${api}/health`); break } catch { await new Promise((r) => setTimeout(r, 50)) }
+    }
+    const call = (method, path, body) => fetch(`${api}${path}`, {
+      method, headers: { 'content-type': 'application/json' }, body: body && JSON.stringify(body),
+    }).then(async (res) => ({ status: res.status, body: await res.json() }))
+    const task = (await call('POST', '/tasks', { title: 'HTTP' })).body
+    const threadId = 'thread:project:p1:t1'
+    const link = `https://app.t3.codes/threads/env/${encodeURIComponent(threadId)}`
+    const linked = await call('POST', '/sessions', { thread_id: threadId, task_id: task.id, title: 'Chat', link })
+    assert.equal(linked.status, 200)
+    assert.equal(linked.body.sessions[0].thread_id, threadId)
+    assert.equal((await call('DELETE', `/sessions/${encodeURIComponent(threadId)}`)).status, 200)
+    assert.equal((await call('GET', '/tasks')).body.tasks[0].sessions.length, 0)
+    assert.equal((await call('DELETE', '/sessions/%E0%A4%A')).status, 400)
+  } finally {
+    server.kill()
+  }
 })

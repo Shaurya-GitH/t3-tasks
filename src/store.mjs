@@ -206,8 +206,11 @@ export function linkSession(threadId, taskId, { title = '', link = '' } = {}, ac
   return getTask(task.id)
 }
 
-export function unlinkSession(threadId) {
+export function unlinkSession(threadId, actor = 'human') {
+  const row = db.prepare('SELECT task_id, title FROM sessions WHERE thread_id = ?').get(String(threadId))
+  if (!row) return
   db.prepare('DELETE FROM sessions WHERE thread_id = ?').run(String(threadId))
+  log(row.task_id, actor, `Session left${row.title ? `: ${row.title}` : ''}`)
 }
 
 export function taskForSession(threadId) {
