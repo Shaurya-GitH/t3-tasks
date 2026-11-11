@@ -22,7 +22,9 @@ const sessionInfo = () => new Promise((resolve) => {
   })
 })
 
-const brief = (t) => ({ id: t.id, title: t.title, status: t.status, status_note: t.status_note, notes: t.notes, sessions: t.sessions.length })
+const brief = (t) => ({ id: t.id, title: t.title, status: t.status, status_note: t.status_note, sessions: t.sessions.length, acceptance_criteria: `${t.criteria.filter((c) => c.done).length}/${t.criteria.length} met` })
+const full = (t) => ({ id: t.id, title: t.title, status: t.status, status_note: t.status_note, description: t.notes, acceptance_criteria: t.criteria, sessions: t.sessions.map((s) => s.title || s.thread_id) })
+const mine = (task_id) => task_id ?? ((threadId && store.taskForSession(threadId)?.id) || (() => { throw new Error('this session is not linked to a task; call task_link or task_create first') })())
 const needSession = () => threadId || (() => { throw new Error('this session has no id; cannot link it') })()
 
 const tools = {
@@ -35,19 +37,44 @@ const tools = {
     description: 'Link this session to an existing task: this session is now working towards shipping it. A session has one task; linking again moves it.',
     properties: { task_id: { type: 'integer' } },
     required: ['task_id'],
-    run: async ({ task_id }) => brief(store.linkSession(needSession(), task_id, await sessionInfo())),
+    run: async ({ task_id }) => full(store.linkSession(needSession(), task_id, await sessionInfo())),
+  },
+  task_get: {
+    description: 'Read one task in full: description and acceptance criteria with their ids (default: the task this session is linked to). Read it before you start work on a task.',
+    properties: { task_id: { type: 'integer' } },
+    run: ({ task_id }) => full(store.getTask(mine(task_id))),
+  },
+  task_check: {
+    description: 'Check off an acceptance criterion once it is actually met and verified (or uncheck it if it regressed). You cannot reword or remove criteria; only the user can.',
+    properties: { criterion_id: { type: 'integer' }, done: { type: 'boolean', description: 'Default true' } },
+    required: ['criterion_id'],
+    run: ({ criterion_id, done = true }) => full(store.updateCriterion(criterion_id, { done }, 'agent')),
+  },
+  task_add_criteria: {
+    description: 'Add acceptance criteria to a task (default: this session\'s task). Use when a task has none and the user stated what done means, or you agreed them with the user. Each is one checkable outcome.',
+    properties: { criteria: { type: 'array', items: { type: 'string' } }, task_id: { type: 'integer' } },
+    required: ['criteria'],
+    run: ({ criteria, task_id }) => {
+      const id = mine(task_id)
+      for (const c of criteria) store.addCriterion(id, c, 'agent')
+      return full(store.getTask(id))
+    },
   },
   task_create: {
     description: 'Create a task for the work the user asked this session to do, and link this session to it. Use only when no open task matches. For work that branches off the current task, use task_suggest instead.',
-    properties: { title: { type: 'string', description: 'Short outcome, e.g. "Ship Klarna refund fix"' }, notes: { type: 'string' } },
+    properties: {
+      title: { type: 'string', description: 'Short outcome, e.g. "Ship Klarna refund fix"' },
+      description: { type: 'string', description: 'What the user asked for and why, in a few lines' },
+      acceptance_criteria: { type: 'array', items: { type: 'string' }, description: 'Checkable outcomes that define done, taken from what the user asked for' },
+    },
     required: ['title'],
-    run: async ({ title, notes }) => {
-      const task = store.createTask({ title, notes, source: 'agent' })
-      return brief(threadId ? store.linkSession(threadId, task.id, await sessionInfo()) : task)
+    run: async ({ title, description, acceptance_criteria }) => {
+      const task = store.createTask({ title, notes: description, acceptance_criteria, source: 'agent' }, 'agent')
+      return full(threadId ? store.linkSession(threadId, task.id, await sessionInfo()) : task)
     },
   },
   task_update: {
-    description: 'Update the status of a task (default: the task this session is linked to). in_progress when work starts, blocked when waiting on the user or something external, done when the work is shipped or verified. You cannot set settled: only the user settles.',
+    description: 'Update the status of a task (default: the task this session is linked to). in_progress when work starts, blocked when waiting on the user or something external, done when the work is shipped or verified. done is refused while an acceptance criterion is open. You cannot set settled: only the user settles.',
     properties: {
       status: { type: 'string', enum: store.STATUSES.filter((s) => s !== 'settled') },
       note: { type: 'string', description: 'One line: where the work stands or what it waits on' },
@@ -55,8 +82,7 @@ const tools = {
     },
     required: ['status'],
     run: async ({ status, note, task_id }) => {
-      const id = task_id ?? (threadId && store.taskForSession(threadId)?.id)
-      if (!id) throw new Error('this session is not linked to a task; call task_link or task_create first')
+      const id = mine(task_id)
       const task = store.updateTask(id, { status, status_note: note }, 'agent')
       if (threadId && store.taskForSession(threadId)?.id === task.id) store.linkSession(threadId, task.id, await sessionInfo()) // refresh the session title
       return brief(task)
@@ -72,7 +98,7 @@ const tools = {
 
 async function handle({ method, params }) {
   if (method === 'initialize') {
-    return { protocolVersion: params?.protocolVersion || '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 't3-tasks', version: '0.1.0' } }
+    return { protocolVersion: params?.protocolVersion || '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 't3-tasks', version: '0.2.0' } }
   }
   if (method === 'ping') return {}
   if (method === 'tools/list') {

@@ -40,3 +40,26 @@ test('an accepted suggestion becomes a task', () => {
   assert.equal(task.title, 'Fix flaky test')
   assert.equal(store.listSuggestions().length, 0)
 })
+
+test('acceptance criteria gate done for agents, not for the human', () => {
+  const task = store.createTask({ title: 'Ticket', acceptance_criteria: ['Tests pass', 'Docs updated'] }, 'agent')
+  const [a, b] = task.criteria
+  assert.throws(() => store.updateTask(task.id, { status: 'done' }, 'agent'), /2 acceptance criteria are open/)
+  store.updateCriterion(a.id, { done: true }, 'agent')
+  assert.throws(() => store.updateCriterion(b.id, { text: 'easier' }, 'agent'), /only the user/)
+  assert.throws(() => store.updateTask(task.id, { status: 'done' }, 'agent'), /1 acceptance criteria/)
+  store.updateCriterion(b.id, { done: true }, 'agent')
+  const done = store.updateTask(task.id, { status: 'done', status_note: 'shipped' }, 'agent')
+  assert.equal(done.status, 'done')
+  assert.match(done.events[0].text, /Moved to Done: shipped/)
+  const other = store.createTask({ title: 'Human override', acceptance_criteria: ['x'] })
+  assert.equal(store.updateTask(other.id, { status: 'done' }, 'human').status, 'done')
+})
+
+test('new tasks go to the top; position reorders', () => {
+  const a = store.createTask({ title: 'older' }), b = store.createTask({ title: 'newer' })
+  const order = () => store.listTasks().map((t) => t.id)
+  assert.ok(order().indexOf(b.id) < order().indexOf(a.id))
+  store.updateTask(a.id, { position: b.position - 1 }, 'human')
+  assert.ok(order().indexOf(a.id) < order().indexOf(b.id))
+})

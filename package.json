@@ -1,6 +1,6 @@
 {
   "name": "t3-tasks",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A to-do list for T3 Code: tasks one level above sessions, kept current by the agents.",
   "type": "module",
   "license": "MIT",
