@@ -60,17 +60,31 @@ test('new tasks go to the top; position reorders', () => {
   assert.ok(order().indexOf(a.id) < order().indexOf(b.id))
 })
 
-test('each new task gets the color fewest open tasks use; only known colors are accepted', () => {
+test('no two open tasks look alike: new tasks take a distinct color, a close pick is refused', () => {
+  const tasks = Array.from({ length: 20 }, (_, i) => store.createTask({ title: `Colored ${i}` }))
   const open = store.listTasks({ includeSettled: false })
-  const counts = new Map(store.COLORS.map((c) => [c, open.filter((t) => t.color === c).length]))
-  const least = Math.min(...counts.values())
-  const task = store.createTask({ title: 'Colored' })
-  assert.equal(counts.get(task.color), least)
-  assert.equal(store.updateTask(task.id, { color: 'teal' }, 'human').color, 'teal')
-  assert.throws(() => store.updateTask(task.id, { color: 'red' }, 'human'), /color must be/)
+  for (const a of open) for (const b of open) {
+    if (a.id < b.id) assert.ok(store.colorDistance(a.color, b.color) >= store.MIN_COLOR_DISTANCE, `#${a.id} ${a.color} vs #${b.id} ${b.color}`)
+  }
+  const [x, y] = tasks
+  assert.throws(() => store.updateTask(x.id, { color: y.color }, 'human'), new RegExp(`too close to the color of task #${y.id}`))
+  assert.throws(() => store.updateTask(x.id, { color: 'teal' }, 'human'), /hex color/)
+  assert.equal(store.updateTask(x.id, { color: x.color.toUpperCase() }, 'human').color, x.color)
+  assert.match(store.updateTask(x.id, { color: 'auto' }, 'human').color, /^#[0-9a-f]{6}$/)
+  for (const t of tasks) store.deleteTask(t.id)
 })
 
-test('startup resumes a partial color backfill without changing assigned colors', async () => {
+test('a task remembers its project; both ids go together', () => {
+  const task = store.createTask({ title: 'In a project' })
+  const set = store.updateTask(task.id, { environment_id: 'env-1', project_id: 'p-1' }, 'human')
+  assert.deepEqual([set.environment_id, set.project_id], ['env-1', 'p-1'])
+  assert.equal(store.updateTask(task.id, { title: 'Renamed' }, 'human').project_id, 'p-1')
+  assert.throws(() => store.updateTask(task.id, { project_id: 'p-2' }, 'human'), /go together/)
+  const cleared = store.updateTask(task.id, { environment_id: null, project_id: null }, 'human')
+  assert.deepEqual([cleared.environment_id, cleared.project_id], [null, null])
+})
+
+test('startup turns named colors into hex; a duplicate open color is replaced', async () => {
   const { DatabaseSync } = await import('node:sqlite')
   const dir = mkdtempSync(join(tmpdir(), 't3-tasks-migration-'))
   const db = new DatabaseSync(join(dir, 'tasks.db'))
@@ -83,18 +97,26 @@ test('startup resumes a partial color backfill without changing assigned colors'
       position REAL NOT NULL DEFAULT 0, color TEXT,
       UNIQUE (source, external_id)
     );
-    INSERT INTO tasks (id, title, created_at, updated_at, color)
-      VALUES (1, 'Assigned', '', '', 'orange'), (2, 'Interrupted', '', '', NULL);
+    INSERT INTO tasks (id, title, status, created_at, updated_at, color) VALUES
+      (1, 'Orange', 'todo', '', '', 'orange'), (2, 'Orange again', 'todo', '', '', 'orange'),
+      (3, 'Settled orange', 'settled', '', '', 'orange'), (4, 'None', 'todo', '', '', NULL);
   `)
   const { spawnSync } = await import('node:child_process')
+  let first
   for (let i = 0; i < 2; i++) {
     const run = spawnSync(process.execPath, ['--input-type=module', '-e', "await import('./src/store.mjs')"], {
       cwd: new URL('..', import.meta.url),
       env: { ...process.env, T3_TASKS_HOME: dir }, encoding: 'utf8',
     })
     assert.equal(run.status, 0, run.stderr)
-    assert.deepEqual(db.prepare('SELECT color FROM tasks ORDER BY id').all().map((row) => row.color), ['orange', 'teal'])
+    const colors = db.prepare('SELECT color FROM tasks ORDER BY id').all().map((row) => row.color)
+    first ??= colors
+    assert.deepEqual(colors, first, 'a second start changes nothing')
   }
+  assert.equal(first[0], '#f97316')
+  assert.equal(first[2], '#f97316')
+  assert.ok(first.every((c) => /^#[0-9a-f]{6}$/.test(c)))
+  for (const i of [1, 3]) assert.ok(store.colorDistance(first[i], first[0]) >= store.MIN_COLOR_DISTANCE)
   db.close()
 })
 
@@ -130,7 +152,7 @@ test('a task records when it was settled, and forgets it when reopened', (t) => 
   assert.equal(task.settled_at, null)
   const settled = store.updateTask(task.id, { status: 'settled' }, 'human')
   assert.ok(Date.parse(settled.settled_at) > 0)
-  assert.equal(store.updateTask(task.id, { color: 'teal' }, 'human').settled_at, settled.settled_at)
+  assert.equal(store.updateTask(task.id, { color: 'auto' }, 'human').settled_at, settled.settled_at)
   assert.equal(store.updateTask(task.id, { status: 'in_progress', status_note: 'Reopened' }, 'human').settled_at, null)
   t.mock.timers.tick(1)
   const resettled = store.updateTask(task.id, { status: 'settled' }, 'human')
@@ -157,7 +179,7 @@ test('settling stores each session\'s mark; leaving Settled or moving the sessio
   store.updateTask(task.id, { status: 'settled', session_marks: { m1: '2026-11-11T10:00:00.000Z', m2: '', m3: 'x' } }, 'human')
   assert.deepEqual(marks(task.id), ['2026-11-11T10:00:00.000Z', ''])
   assert.deepEqual(marks(other.id), [null])
-  store.updateTask(task.id, { color: 'teal', session_marks: { m1: 'later' } }, 'human')
+  store.updateTask(task.id, { color: 'auto', session_marks: { m1: 'later' } }, 'human')
   assert.deepEqual(marks(task.id), ['2026-11-11T10:00:00.000Z', ''])
   store.linkSession('m2', other.id)
   assert.deepEqual(marks(other.id), [null, null])

@@ -29,16 +29,16 @@ claude plugin install t3-tasks@t3-tasks
 
 New sessions pick it up. The service starts with the first session; `npm start` starts it by hand.
 
-### Upgrade to 0.3.0
+### Upgrade to 0.4.0
 
 Apply the update in this order:
 
-1. Install the T3 Code app release with the Staging column.
-2. Update `~/dev/t3-tasks` to 0.3.0.
-3. Stop the existing T3 Tasks HTTP service on port 4777 through the terminal or process manager that started it. Start it again from the updated checkout with `cd ~/dev/t3-tasks && npm start`.
-4. Update the installed Claude plugin to 0.3.0 and start a new session.
+1. Install the T3 Code app release with the task color picker and the task project.
+2. Update `~/dev/t3-tasks` to 0.4.0.
+3. Stop the existing T3 Tasks HTTP service on port 4777 through the terminal or process manager that started it. Start it again from the updated checkout with `cd ~/dev/t3-tasks && npm start`. On its first start it turns the named task colors into hex colors and gives a new color to any open task whose color is too close to another's.
+4. Update the installed Claude plugin to 0.4.0 and start a new session.
 
-Updating the plugin does not restart the HTTP service. A new session leaves an existing service running when its health check succeeds. The 0.2.0 service rejects moves to `staging`.
+Updating the plugin does not restart the HTTP service. A new session leaves an existing service running when its health check succeeds. An app older than 0.4.0 shows no task colors with this service.
 
 ## Connect another app
 
@@ -48,7 +48,7 @@ Everything the board does goes through the HTTP API on `127.0.0.1:4777`, so a sy
 | --- | --- |
 | `GET /api/tasks` | All tasks (with sessions, criteria and history) |
 | `POST /api/tasks` `{title, notes?, status?, acceptance_criteria?, source?, external_id?}` | Create a task. With `source` + `external_id` it is an upsert: sending the same item again updates it |
-| `PATCH /api/tasks/:id` `{title?, notes?, status?, status_note?, position?}` | Change a task |
+| `PATCH /api/tasks/:id` `{title?, notes?, status?, status_note?, position?, color?, environment_id?, project_id?}` | Change a task. `color` is a hex color or `auto` (the most distinct free one); it is refused when it is too close to another open task's color. `environment_id` and `project_id` name the T3 project new sessions start in; send both, or both `null` to clear |
 | `POST /api/tasks/:id/criteria` `{text}` · `PATCH /api/criteria/:id` `{text?, done?}` · `DELETE /api/criteria/:id` | Acceptance criteria |
 | `DELETE /api/sessions/:thread_id` | Unlink a session from its task |
 | `DELETE /api/tasks/:id` | Delete a task |

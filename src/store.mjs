@@ -6,8 +6,32 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 export const STATUSES = ['todo', 'in_progress', 'blocked', 'staging', 'done', 'settled']
-// Task colors, kept clear of the colors T3 uses for session status (amber, indigo, sky, green, red).
-export const COLORS = ['pink', 'teal', 'purple', 'lime', 'orange', 'fuchsia']
+// Task colors are hex. No two open tasks may look alike: their OKLab distance stays at or above
+// MIN_COLOR_DISTANCE. A new task takes the color farthest from every open task's and from the
+// colors T3 uses for session status (amber, indigo, sky, green, red).
+export const MIN_COLOR_DISTANCE = 0.08
+const STATUS_HEX = ['#f59e0b', '#6366f1', '#0ea5e9', '#22c55e', '#ef4444']
+// The named colors of releases before 0.4.0.
+const LEGACY_HEX = { pink: '#ec4899', teal: '#14b8a6', purple: '#a855f7', lime: '#84cc16', orange: '#f97316', fuchsia: '#d946ef' }
+const HEX = /^#[0-9a-f]{6}$/
+const oklab = (hex) => {
+  const [r, g, b] = [1, 3, 5].map((i) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+  })
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+  return [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s]
+}
+export const colorDistance = (a, b) => { const p = oklab(a), q = oklab(b); return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) }
+const hsl = (h, s, l) => {
+  const f = (n) => { const k = (n + h / 30) % 12; return l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1)) }
+  return '#' + [f(0), f(8), f(4)].map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('')
+}
+// Room for about 43 open tasks; past that a new task takes the least crowded color.
+const CANDIDATES = [0.55, 0.4, 0.7].flatMap((l) => [0.9, 0.7, 0.5].flatMap((s) => Array.from({ length: 72 }, (_, i) => hsl(i * 5, s, l))))
 export const PORT = Number(process.env.T3_TASKS_PORT) || 4777
 
 const dir = process.env.T3_TASKS_HOME || join(homedir(), '.t3-tasks')
@@ -53,9 +77,9 @@ db.exec(`
 // Added after the first release: the card's place in its column (lower is higher up).
 try { db.exec('ALTER TABLE tasks ADD COLUMN position REAL NOT NULL DEFAULT 0') } catch {}
 try { db.exec('ALTER TABLE tasks ADD COLUMN color TEXT') } catch {}
-for (const { id } of db.prepare('SELECT id FROM tasks WHERE color IS NULL ORDER BY id').all()) {
-  db.prepare('UPDATE tasks SET color = ? WHERE id = ?').run(COLORS[(id - 1) % COLORS.length], id)
-}
+// The T3 project a session started from the board opens in (both null for none).
+try { db.exec('ALTER TABLE tasks ADD COLUMN environment_id TEXT') } catch {}
+try { db.exec('ALTER TABLE tasks ADD COLUMN project_id TEXT') } catch {}
 // When the task was settled, so the app can tell a session talked to afterwards. Tasks settled
 // before this column existed take it from their last move to Settled.
 try { db.exec('ALTER TABLE tasks ADD COLUMN settled_at TEXT') } catch {}
@@ -67,13 +91,24 @@ db.exec(`UPDATE tasks SET settled_at = COALESCE(
 try { db.exec('ALTER TABLE sessions ADD COLUMN settle_mark TEXT') } catch {}
 
 const now = () => new Date().toISOString()
-// The color fewest open tasks use, so tasks side by side tell apart.
-const nextColor = () => {
-  const used = new Map(COLORS.map((c) => [c, 0]))
-  for (const { color } of db.prepare("SELECT color FROM tasks WHERE status != 'settled'").all()) {
-    if (used.has(color)) used.set(color, used.get(color) + 1)
+const openColors = (exceptId) => db.prepare("SELECT id, color FROM tasks WHERE status != 'settled' AND id != ? AND color LIKE '#%'").all(exceptId ?? 0)
+// The candidate farthest from every open task's color and the session status colors.
+const nextColor = (exceptId) => {
+  const taken = [...openColors(exceptId).map((t) => t.color), ...STATUS_HEX]
+  let best, bestGap = -1
+  for (const c of CANDIDATES) {
+    const gap = Math.min(...taken.map((t) => colorDistance(c, t)))
+    if (gap > bestGap) [best, bestGap] = [c, gap]
   }
-  return COLORS.reduce((best, c) => (used.get(c) < used.get(best) ? c : best))
+  return best
+}
+const clash = (color, exceptId) => openColors(exceptId).find((t) => colorDistance(color, t.color) < MIN_COLOR_DISTANCE)
+// Tasks without a color, or with a named one, take a hex one. Open tasks keep their old color when
+// no open task already looks like it, so the board changes as little as it can.
+for (const { id, color, status } of db.prepare("SELECT id, color, status FROM tasks WHERE color IS NULL OR color NOT LIKE '#%' ORDER BY status = 'settled', id").all()) {
+  const legacy = LEGACY_HEX[color]
+  const next = legacy && (status === 'settled' || !clash(legacy, id)) ? legacy : nextColor(id)
+  db.prepare('UPDATE tasks SET color = ? WHERE id = ?').run(next, id)
 }
 const fail = (message) => { throw new Error(message) }
 const text = (value, name) => {
@@ -123,7 +158,9 @@ export function createTask({ title, notes = '', status = 'todo', source = 'manua
 // actor is 'agent' or 'human'. Settling is the human's call alone, a settled
 // task stays as the human left it, and an agent cannot call a task done while
 // an acceptance criterion is still open.
-export function updateTask(id, { title, notes, status, status_note, position, color, expected_settled_at, session_marks }, actor) {
+// color 'auto' takes the most distinct free color. environment_id and project_id are set together
+// (null clears them).
+export function updateTask(id, { title, notes, status, status_note, position, color, environment_id, project_id, expected_settled_at, session_marks }, actor) {
   db.exec('BEGIN IMMEDIATE')
   try {
     const task = getTask(id)
@@ -136,13 +173,23 @@ export function updateTask(id, { title, notes, status, status_note, position, co
         fail(`not done yet: ${open.length} acceptance criteria are open (${open.map((c) => `#${c.id} ${c.text}`).join('; ')}). Meet them and check them off with task_check, or set blocked and say why.`)
       }
     }
-    if (color !== undefined && !COLORS.includes(color)) fail(`color must be one of ${COLORS.join(', ')}`)
+    if (color === 'auto') color = nextColor(task.id)
+    else if (color !== undefined) {
+      if (typeof color !== 'string' || !HEX.test(color.toLowerCase())) fail('color must be a hex color like #3fa9f5, or auto')
+      color = color.toLowerCase()
+      const near = clash(color, task.id)
+      if (near) fail(`color is too close to the color of task #${near.id}; pick one farther away`)
+    }
+    if ((environment_id === undefined) !== (project_id === undefined)) fail('environment_id and project_id go together')
+    const project = environment_id === undefined ? [task.environment_id, task.project_id]
+      : environment_id === null && project_id === null ? [null, null]
+      : [text(environment_id, 'environment_id'), text(project_id, 'project_id')]
     if (expected_settled_at !== undefined && typeof expected_settled_at !== 'string') fail('expected_settled_at must be a string')
     const marks = Object.entries(session_marks ?? {})
     if (typeof (session_marks ?? {}) !== 'object' || marks.some(([, v]) => typeof v !== 'string')) fail('session_marks must map thread ids to strings')
     const nextStatus = status ?? task.status
     const settledAt = nextStatus !== 'settled' ? null : task.status === 'settled' ? task.settled_at : now()
-    const result = db.prepare(`UPDATE tasks SET title = ?, notes = ?, status = ?, status_note = ?, position = ?, color = ?, settled_at = ?, updated_at = ?
+    const result = db.prepare(`UPDATE tasks SET title = ?, notes = ?, status = ?, status_note = ?, position = ?, color = ?, environment_id = ?, project_id = ?, settled_at = ?, updated_at = ?
       WHERE id = ? AND (? IS NULL OR (status = 'settled' AND settled_at = ?))`).run(
       title === undefined ? task.title : text(title, 'title'),
       notes === undefined ? task.notes : String(notes),
@@ -150,6 +197,7 @@ export function updateTask(id, { title, notes, status, status_note, position, co
       status_note === undefined ? task.status_note : String(status_note),
       typeof position === 'number' ? position : task.position,
       color ?? task.color,
+      ...project,
       settledAt,
       now(), task.id, expected_settled_at ?? null, expected_settled_at ?? null
     )
