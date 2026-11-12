@@ -94,7 +94,11 @@ const now = () => new Date().toISOString()
 const openColors = (exceptId) => db.prepare("SELECT id, color FROM tasks WHERE status != 'settled' AND id != ? AND color LIKE '#%'").all(exceptId ?? 0)
 // The candidate farthest from every open task's color and the session status colors.
 const nextColor = (exceptId) => {
-  const taken = [...openColors(exceptId).map((t) => t.color), ...STATUS_HEX]
+  const taken = [
+    ...db.prepare("SELECT color FROM tasks WHERE status != 'settled' AND id != ?").all(exceptId ?? 0)
+      .map(({ color }) => LEGACY_HEX[color] ?? color).filter((color) => HEX.test(color)),
+    ...STATUS_HEX,
+  ]
   let best, bestGap = -1
   for (const c of CANDIDATES) {
     const gap = Math.min(...taken.map((t) => colorDistance(c, t)))
@@ -144,15 +148,23 @@ export function createTask({ title, notes = '', status = 'todo', source = 'manua
     const existing = db.prepare('SELECT id FROM tasks WHERE source = ? AND external_id = ?').get(source, String(external_id))
     if (existing) return updateTask(existing.id, { title, notes }, 'human')
   }
-  const t = now()
-  // New cards go to the top of their column.
-  const top = db.prepare('SELECT MIN(position) AS p FROM tasks').get().p ?? 0
-  const id = Number(db.prepare(
-    'INSERT INTO tasks (title, notes, status, source, external_id, position, color, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(title, String(notes), status, String(source), external_id == null ? null : String(external_id), top - 1, nextColor(), t, t).lastInsertRowid)
-  log(id, actor, 'Created the task')
-  for (const c of acceptance_criteria) db.prepare('INSERT INTO criteria (task_id, text) VALUES (?, ?)').run(id, text(c, 'criterion'))
-  return getTask(id)
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    const t = now()
+    // New cards go to the top of their column.
+    const top = db.prepare('SELECT MIN(position) AS p FROM tasks').get().p ?? 0
+    const id = Number(db.prepare(
+      'INSERT INTO tasks (title, notes, status, source, external_id, position, color, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(title, String(notes), status, String(source), external_id == null ? null : String(external_id), top - 1, nextColor(), t, t).lastInsertRowid)
+    log(id, actor, 'Created the task')
+    for (const c of acceptance_criteria) db.prepare('INSERT INTO criteria (task_id, text) VALUES (?, ?)').run(id, text(c, 'criterion'))
+    const created = getTask(id)
+    db.exec('COMMIT')
+    return created
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
 }
 
 // actor is 'agent' or 'human'. Settling is the human's call alone, a settled

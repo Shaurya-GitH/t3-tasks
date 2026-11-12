@@ -74,6 +74,53 @@ test('no two open tasks look alike: new tasks take a distinct color, a close pic
   for (const t of tasks) store.deleteTask(t.id)
 })
 
+test('concurrent processes create tasks with distinct colors', async (t) => {
+  const { spawn } = await import('node:child_process')
+  const { once } = await import('node:events')
+  const { DatabaseSync } = await import('node:sqlite')
+  const dir = mkdtempSync(join(tmpdir(), 't3-tasks-concurrent-'))
+  const code = `
+    const store = await import('./src/store.mjs');
+    process.send('ready');
+    process.once('message', () => {
+      store.createTask({ title: 'Concurrent' });
+      process.disconnect();
+    });
+  `
+  const children = [], exits = []
+  t.after(async () => {
+    for (const child of children) if (child.exitCode === null) child.kill()
+    await Promise.all(exits)
+  })
+  for (let i = 0; i < 8; i++) {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', code], {
+      cwd: new URL('..', import.meta.url),
+      env: { ...process.env, T3_TASKS_HOME: dir }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+    })
+    children.push(child)
+    let stderr = ''
+    child.stderr.on('data', (chunk) => { stderr += chunk })
+    const exited = once(child, 'exit').then(([code]) => ({ code, stderr }))
+    exits.push(exited)
+    await Promise.race([
+      once(child, 'message'),
+      exited.then(({ stderr }) => { throw new Error(`child exited before ready: ${stderr}`) }),
+    ])
+  }
+  for (const child of children) child.send('create')
+  for (const { code, stderr } of await Promise.all(exits)) assert.equal(code, 0, stderr)
+  const db = new DatabaseSync(join(dir, 'tasks.db'))
+  try {
+    const colors = db.prepare('SELECT color FROM tasks').all().map((row) => row.color)
+    assert.equal(colors.length, children.length)
+    for (let i = 0; i < colors.length; i++) for (let j = i + 1; j < colors.length; j++) {
+      assert.ok(store.colorDistance(colors[i], colors[j]) >= store.MIN_COLOR_DISTANCE, `${colors[i]} vs ${colors[j]}`)
+    }
+  } finally {
+    db.close()
+  }
+})
+
 test('a task remembers its project; both ids go together', () => {
   const task = store.createTask({ title: 'In a project' })
   const set = store.updateTask(task.id, { environment_id: 'env-1', project_id: 'p-1' }, 'human')
@@ -99,7 +146,8 @@ test('startup turns named colors into hex; a duplicate open color is replaced', 
     );
     INSERT INTO tasks (id, title, status, created_at, updated_at, color) VALUES
       (1, 'Orange', 'todo', '', '', 'orange'), (2, 'Orange again', 'todo', '', '', 'orange'),
-      (3, 'Settled orange', 'settled', '', '', 'orange'), (4, 'None', 'todo', '', '', NULL);
+      (3, 'Settled orange', 'settled', '', '', 'orange'), (4, 'None', 'todo', '', '', NULL),
+      (5, 'Fuchsia', 'todo', '', '', 'fuchsia');
   `)
   const { spawnSync } = await import('node:child_process')
   let first
@@ -115,8 +163,11 @@ test('startup turns named colors into hex; a duplicate open color is replaced', 
   }
   assert.equal(first[0], '#f97316')
   assert.equal(first[2], '#f97316')
+  assert.equal(first[4], '#d946ef', 'a replacement must not crowd out an unmigrated color')
   assert.ok(first.every((c) => /^#[0-9a-f]{6}$/.test(c)))
-  for (const i of [1, 3]) assert.ok(store.colorDistance(first[i], first[0]) >= store.MIN_COLOR_DISTANCE)
+  for (const i of [0, 1, 3, 4]) for (const j of [0, 1, 3, 4]) {
+    if (i < j) assert.ok(store.colorDistance(first[i], first[j]) >= store.MIN_COLOR_DISTANCE)
+  }
   db.close()
 })
 
